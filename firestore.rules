@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (Auth UID)
+    // Fields:
+    //   - uid: string (required)
+    //   - name: string (required)
+    //   - email: string (required, email format)
+    //   - whatsapp: string (optional)
+    //   - initialDescription: string (optional)
+    //   - role: string (required, ['client', 'admin'])
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: projects
+    // Document ID: {projectId} (Auto-generated)
+    // Fields:
+    //   - userId: string (required, owner UID)
+    //   - websiteName: string (required)
+    //   - email: string (required, email format)
+    //   - description: string (required)
+    //   - status: string (required, ['Pending', 'Approved'])
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        ( (request.auth.token.email == "hiranyaudakara2@gmail.com" && request.auth.token.email_verified == true) ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') );
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'role', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role in ['client', 'admin'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['userId', 'websiteName', 'email', 'description', 'status', 'createdAt']) &&
+             data.userId is string &&
+             data.websiteName is string && data.websiteName.size() > 0 && data.websiteName.size() < 200 &&
+             isValidEmail(data.email) &&
+             data.description is string && data.description.size() > 0 && data.description.size() < 5000 &&
+             data.status in ['Pending', 'In Progress', 'Approved'] &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'client';
+      allow update: if isAdmin() && isValidUser(request.resource.data);
+    }
+
+    match /projects/{projectId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidProject(request.resource.data) && request.resource.data.userId == request.auth.uid && request.resource.data.status == 'Pending';
+      allow update: if isAdmin() && isValidProject(request.resource.data) && request.resource.data.userId == resource.data.userId;
+      allow delete: if isAdmin();
+    }
+
+    match /system/{document} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
