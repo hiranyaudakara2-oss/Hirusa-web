@@ -73,6 +73,13 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isValidMessage(data) {
+      return data.keys().hasAll(['sender', 'text', 'createdAt']) &&
+             data.sender in ['admin', 'client'] &&
+             data.text is string && data.text.size() > 0 && data.text.size() < 2000 &&
+             data.createdAt is timestamp;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -88,6 +95,13 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidProject(request.resource.data) && request.resource.data.userId == request.auth.uid && request.resource.data.status == 'Pending';
       allow update: if isAdmin() && isValidProject(request.resource.data) && request.resource.data.userId == resource.data.userId;
       allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid || isAdmin());
+        allow create: if isAuthenticated() && isValidMessage(request.resource.data) && 
+                      ( (request.resource.data.sender == 'client' && get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid) || 
+                        (request.resource.data.sender == 'admin' && isAdmin()) );
+      }
     }
 
     match /system/{document} {

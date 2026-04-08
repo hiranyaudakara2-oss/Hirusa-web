@@ -18,6 +18,7 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
+  arrayUnion,
   orderBy,
   Timestamp,
   getDocFromServer
@@ -84,6 +85,13 @@ export interface UserProfile {
   createdAt: Timestamp;
 }
 
+export interface ProjectMessage {
+  id: string;
+  sender: 'admin' | 'client';
+  text: string;
+  createdAt: Timestamp;
+}
+
 export interface ProjectRequest {
   id: string;
   userId: string;
@@ -92,6 +100,7 @@ export interface ProjectRequest {
   description: string;
   status: 'Pending' | 'In Progress' | 'Approved';
   createdAt: Timestamp;
+  messages?: ProjectMessage[];
 }
 
 export const loginWithGoogle = async () => {
@@ -153,6 +162,36 @@ export const updateProjectStatus = async (projectId: string, status: ProjectRequ
   }
 };
 
+export const sendMessage = async (projectId: string, sender: 'admin' | 'client', text: string) => {
+  const colRef = collection(db, 'projects', projectId, 'messages');
+  try {
+    await addDoc(colRef, {
+      sender,
+      text,
+      createdAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, `projects/${projectId}/messages`);
+    throw error;
+  }
+};
+
+export const subscribeToMessages = (projectId: string, callback: (messages: ProjectMessage[]) => void) => {
+  const q = query(
+    collection(db, 'projects', projectId, 'messages'),
+    orderBy('createdAt', 'asc')
+  );
+  return onSnapshot(q, (snapshot) => {
+    const messages = snapshot.docs.map(doc => ({ 
+      id: doc.id, 
+      ...doc.data() 
+    } as ProjectMessage));
+    callback(messages);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, `projects/${projectId}/messages`);
+  });
+};
+
 export const deleteProject = async (projectId: string) => {
   const docRef = doc(db, 'projects', projectId);
   try {
@@ -177,6 +216,21 @@ export const getProjectDetails = async (projectId: string) => {
     handleFirestoreError(error, OperationType.GET, `projects/${projectId}`);
     return null;
   }
+};
+
+export const subscribeToProject = (projectId: string, callback: (data: { project: ProjectRequest; userProfile: UserProfile | null } | null) => void) => {
+  const docRef = doc(db, 'projects', projectId);
+  return onSnapshot(docRef, async (docSnap) => {
+    if (!docSnap.exists()) {
+      callback(null);
+      return;
+    }
+    const project = { id: docSnap.id, ...docSnap.data() } as ProjectRequest;
+    const userProfile = await getUserProfile(project.userId);
+    callback({ project, userProfile });
+  }, (error) => {
+    handleFirestoreError(error, OperationType.GET, `projects/${projectId}`);
+  });
 };
 
 export const subscribeToUserProjects = (userId: string, callback: (projects: ProjectRequest[]) => void) => {

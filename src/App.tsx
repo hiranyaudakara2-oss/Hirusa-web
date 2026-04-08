@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Component, ReactNode } from 'react';
+import React, { useState, useEffect, useRef, Component, ReactNode } from 'react';
 import { AuthProvider, useAuth } from './AuthContext';
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -13,7 +13,10 @@ import {
   Globe,
   Code,
   Zap,
-  Trash2
+  Trash2,
+  Send,
+  MessageSquare,
+  User
 } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { 
@@ -25,11 +28,15 @@ import {
   subscribeToAllProjects, 
   subscribeToAllUsers,
   updateProjectStatus,
+  sendMessage,
   deleteProject,
   getProjectDetails,
+  subscribeToProject,
+  subscribeToMessages,
   getAdminAccessKey,
   updateAdminAccessKey,
   ProjectRequest,
+  ProjectMessage,
   UserProfile
 } from './firebaseService';
 import { cn } from './lib/utils';
@@ -518,6 +525,112 @@ const Register = () => {
   );
 };
 
+const ProjectCard = ({ project }: { project: ProjectRequest }) => {
+  const [messages, setMessages] = useState<ProjectMessage[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToMessages(project.id, setMessages);
+    return () => unsubscribe();
+  }, [project.id]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  return (
+    <motion.div 
+      layout
+      className="bg-white p-6 rounded-2xl border border-zinc-200 flex flex-col md:flex-row flex-wrap justify-between items-start md:items-center gap-4"
+    >
+      <div className="flex-1 min-w-[200px]">
+        <div className="flex items-center gap-3 mb-1">
+          <h3 className="text-xl font-bold">{project.websiteName}</h3>
+          <span className={cn(
+            "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest",
+            project.status === 'Pending' ? "bg-amber-100 text-amber-700" : 
+            project.status === 'In Progress' ? "bg-blue-100 text-blue-700" :
+            "bg-emerald-100 text-emerald-700"
+          )}>
+            {project.status}
+          </span>
+        </div>
+        <p className="text-zinc-500 text-sm line-clamp-1">{project.description}</p>
+      </div>
+      <div className="text-right">
+        <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Submitted</p>
+        <p className="text-sm font-medium">{project.createdAt?.toDate().toLocaleDateString()}</p>
+      </div>
+      
+      {/* Client Messaging Section */}
+      <div className="w-full mt-4 pt-4 border-t border-zinc-100">
+        <div className="flex items-center gap-2 mb-3">
+          <MessageSquare size={14} className="text-zinc-400" />
+          <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Project Discussion</span>
+        </div>
+        <div 
+          ref={scrollRef}
+          className="space-y-3 max-h-40 overflow-y-auto no-scrollbar pr-2"
+        >
+          {messages.length === 0 ? (
+            <p className="text-xs text-zinc-400 italic">No messages from the team yet. We'll reach out soon!</p>
+          ) : (
+            messages.map((msg) => (
+              <div 
+                key={msg.id}
+                className={cn(
+                  "flex flex-col",
+                  msg.sender === 'client' ? "items-end" : "items-start"
+                )}
+              >
+                <div className={cn(
+                  "px-3 py-2 rounded-2xl text-xs font-medium max-w-[85%]",
+                  msg.sender === 'client' 
+                    ? "bg-blue-600 text-white rounded-tr-none" 
+                    : "bg-gray-200 text-gray-800 rounded-tl-none"
+                )}>
+                  {msg.text}
+                </div>
+                <span className="text-[9px] text-zinc-400 mt-1 font-bold uppercase tracking-tighter">
+                  {msg.sender === 'client' ? 'You' : 'HIRUSA Team'} • {msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Client Reply Input */}
+      <form 
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const form = e.currentTarget;
+          const input = form.elements.namedItem('reply') as HTMLInputElement;
+          if (!input.value.trim()) return;
+          try {
+            await sendMessage(project.id, 'client', input.value.trim());
+            input.value = '';
+          } catch (error) {
+            toast.error('Failed to send message');
+          }
+        }}
+        className="w-full mt-4 flex gap-2"
+      >
+        <input 
+          name="reply"
+          placeholder="Reply to the team..."
+          className="flex-1 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2 text-xs outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
+        />
+        <button type="submit" className="p-2 bg-zinc-900 text-white rounded-xl hover:bg-zinc-800 transition-all shrink-0">
+          <Send size={14} />
+        </button>
+      </form>
+    </motion.div>
+  );
+};
+
 const Dashboard = () => {
   const { user, profile } = useAuth();
   const [projects, setProjects] = useState<ProjectRequest[]>([]);
@@ -585,30 +698,7 @@ const Dashboard = () => {
             </div>
           ) : (
             projects.map((project) => (
-              <motion.div 
-                key={project.id}
-                layout
-                className="bg-white p-6 rounded-2xl border border-zinc-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
-              >
-                <div>
-                  <div className="flex items-center gap-3 mb-1">
-                    <h3 className="text-xl font-bold">{project.websiteName}</h3>
-                    <span className={cn(
-                      "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest",
-                      project.status === 'Pending' ? "bg-amber-100 text-amber-700" : 
-                      project.status === 'In Progress' ? "bg-blue-100 text-blue-700" :
-                      "bg-emerald-100 text-emerald-700"
-                    )}>
-                      {project.status}
-                    </span>
-                  </div>
-                  <p className="text-zinc-500 text-sm line-clamp-1">{project.description}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Submitted</p>
-                  <p className="text-sm font-medium">{project.createdAt?.toDate().toLocaleDateString()}</p>
-                </div>
-              </motion.div>
+              <ProjectCard key={project.id} project={project} />
             ))
           )}
         </div>
@@ -689,34 +779,56 @@ const Dashboard = () => {
 
 const ProjectDetailsModal = ({ projectId, onClose }: { projectId: string; onClose: () => void }) => {
   const [data, setData] = useState<{ project: ProjectRequest; userProfile: UserProfile | null } | null>(null);
+  const [messages, setMessages] = useState<ProjectMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [newMessage, setNewMessage] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const fetchDetails = async () => {
-      setLoading(true);
-      try {
-        const details = await getProjectDetails(projectId);
-        setData(details);
-      } catch (error) {
-        toast.error('Failed to load project details');
-      } finally {
-        setLoading(false);
-      }
+    const unsubscribeProject = subscribeToProject(projectId, (details) => {
+      setData(details);
+      setLoading(false);
+    });
+    
+    const unsubscribeMessages = subscribeToMessages(projectId, (msgs) => {
+      setMessages(msgs);
+    });
+
+    return () => {
+      unsubscribeProject();
+      unsubscribeMessages();
     };
-    fetchDetails();
   }, [projectId]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || sendingMessage) return;
+
+    setSendingMessage(true);
+    try {
+      await sendMessage(projectId, 'admin', newMessage.trim());
+      setNewMessage('');
+    } catch (error) {
+      toast.error('Failed to send message');
+    } finally {
+      setSendingMessage(false);
+    }
+  };
 
   const handleStatusChange = async (newStatus: ProjectRequest['status']) => {
     if (!data) return;
     setUpdating(true);
     try {
       await updateProjectStatus(projectId, newStatus);
-      setData({
-        ...data,
-        project: { ...data.project, status: newStatus }
-      });
       toast.success(`Status updated to ${newStatus}`);
     } catch (error) {
       toast.error('Failed to update status');
@@ -753,7 +865,7 @@ const ProjectDetailsModal = ({ projectId, onClose }: { projectId: string; onClos
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="relative w-full sm:max-w-2xl bg-white sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[90vh]"
+        className="relative w-full sm:max-w-2xl bg-white sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col h-full sm:h-[90vh]"
       >
         {/* Header */}
         <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between bg-white sticky top-0 z-10">
@@ -778,7 +890,7 @@ const ProjectDetailsModal = ({ projectId, onClose }: { projectId: string; onClos
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-8 relative">
+        <div className="flex-1 overflow-y-auto p-6 space-y-8 relative no-scrollbar">
           {showDeleteConfirm && (
             <div className="absolute inset-0 z-20 bg-white/95 backdrop-blur-sm flex items-center justify-center p-6 text-center">
               <div className="max-w-xs space-y-6">
@@ -881,6 +993,102 @@ const ProjectDetailsModal = ({ projectId, onClose }: { projectId: string; onClos
                   </div>
                 </div>
               </section>
+
+              {/* Status Control Section */}
+              <section className="space-y-4">
+                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                  <Zap size={14} />
+                  Status Management
+                </h4>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['Pending', 'In Progress', 'Approved'] as const).map((status) => (
+                    <button
+                      key={status}
+                      onClick={() => handleStatusChange(status)}
+                      disabled={updating || data.project.status === status}
+                      className={cn(
+                        "py-3 rounded-xl text-xs font-bold transition-all border-2",
+                        data.project.status === status 
+                          ? "bg-zinc-900 text-white border-zinc-900" 
+                          : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
+                      )}
+                    >
+                      {status}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {/* Project Discussion Section */}
+              <section className="space-y-4 pb-4">
+                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                  <MessageSquare size={14} />
+                  Project Discussion
+                </h4>
+                <div className="bg-zinc-50 rounded-3xl border border-zinc-100 overflow-hidden flex flex-col">
+                  {/* Message History */}
+                  <div 
+                    ref={scrollRef}
+                    className="h-64 overflow-y-auto p-4 space-y-4 no-scrollbar bg-white/50"
+                  >
+                    {messages.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-8">
+                        <MessageSquare className="text-zinc-200 mb-2" size={32} />
+                        <p className="text-zinc-400 text-sm">No messages yet. Start the conversation.</p>
+                      </div>
+                    ) : (
+                      messages.map((msg) => (
+                        <div 
+                          key={msg.id}
+                          className={cn(
+                            "flex flex-col max-w-[80%]",
+                            msg.sender === 'admin' ? "ml-auto items-end" : "mr-auto items-start"
+                          )}
+                        >
+                          <div className={cn(
+                            "px-4 py-2 rounded-2xl text-sm font-medium",
+                            msg.sender === 'admin' 
+                              ? "bg-blue-600 text-white rounded-tr-none" 
+                              : "bg-gray-200 text-gray-800 rounded-tl-none"
+                          )}>
+                            {msg.text}
+                          </div>
+                          <span className="text-[10px] text-zinc-400 mt-1 font-bold uppercase tracking-tighter">
+                            {msg.sender === 'admin' ? 'You' : 'Client'} • {msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Input Area */}
+                  <form onSubmit={handleSendMessage} className="p-3 bg-white border-t border-zinc-100 flex gap-2">
+                    <textarea 
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      placeholder="Type a message..."
+                      className="flex-1 bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-900 transition-all resize-none h-10 min-h-[40px] max-h-32"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendMessage(e);
+                        }
+                      }}
+                    />
+                    <button 
+                      type="submit"
+                      disabled={!newMessage.trim() || sendingMessage}
+                      className="w-10 h-10 bg-zinc-900 text-white rounded-xl flex items-center justify-center hover:bg-zinc-800 transition-all disabled:opacity-50 shrink-0"
+                    >
+                      {sendingMessage ? (
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <Send size={18} />
+                      )}
+                    </button>
+                  </form>
+                </div>
+              </section>
             </>
           ) : (
             <div className="text-center py-12">
@@ -888,32 +1096,6 @@ const ProjectDetailsModal = ({ projectId, onClose }: { projectId: string; onClos
             </div>
           )}
         </div>
-
-        {/* Footer Actions */}
-        {!loading && data && (
-          <div className="p-6 bg-zinc-50 border-t border-zinc-100">
-            <div className="flex flex-col gap-4">
-              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Update Status</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['Pending', 'In Progress', 'Approved'] as const).map((status) => (
-                  <button
-                    key={status}
-                    onClick={() => handleStatusChange(status)}
-                    disabled={updating || data.project.status === status}
-                    className={cn(
-                      "py-3 rounded-xl text-xs font-bold transition-all border-2",
-                      data.project.status === status 
-                        ? "bg-zinc-900 text-white border-zinc-900" 
-                        : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
-                    )}
-                  >
-                    {status}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </motion.div>
     </div>
   );
